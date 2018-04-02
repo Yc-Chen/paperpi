@@ -25,7 +25,7 @@
  #
 
 import epdif
-import Image
+from PIL import Image
 import RPi.GPIO as GPIO
 
 # Display resolution
@@ -169,7 +169,7 @@ class EPD:
 
     def display_frame(self, frame_buffer):
         self.send_command(DATA_START_TRANSMISSION_1)
-        for i in range(0, self.width / 4 * self.height):
+        for i in range(0, self.width // 4 * self.height):
             temp1 = frame_buffer[i]
             j = 0
             while (j < 4):

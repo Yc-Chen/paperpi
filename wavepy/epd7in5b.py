@@ -25,10 +25,8 @@
  #
 
 import epdif
-import PIL.Image
+import Image
 import RPi.GPIO as GPIO
-
-from logger import logger
 
 # Display resolution
 EPD_WIDTH       = 640
@@ -61,6 +59,7 @@ PLL_CONTROL                                 = 0x30
 TEMPERATURE_SENSOR_COMMAND                  = 0x40
 TEMPERATURE_CALIBRATION                     = 0x41
 TEMPERATURE_SENSOR_WRITE                    = 0x42
+TEMPERATURE_SENSOR_READ                     = 0x43
 VCOM_AND_DATA_INTERVAL_SETTING              = 0x50
 LOW_POWER_DETECTION                         = 0x51
 TCON_SETTING                                = 0x60
@@ -74,7 +73,6 @@ VCM_DC_SETTING                              = 0x82
 
 class EPD:
     def __init__(self):
-        logger.debug('going to create EPD instance')
         self.reset_pin = epdif.RST_PIN
         self.dc_pin = epdif.DC_PIN
         self.busy_pin = epdif.BUSY_PIN
@@ -82,137 +80,122 @@ class EPD:
         self.height = EPD_HEIGHT
 
     def digital_write(self, pin, value):
-        logger.debug('EPD.digital_write')
         epdif.epd_digital_write(pin, value)
 
     def digital_read(self, pin):
-        logger.debug('EPD.digital_read')
         return epdif.epd_digital_read(pin)
 
     def delay_ms(self, delaytime):
-        logger.debug('EPD.delay_ms, %s' % delaytime)
         epdif.epd_delay_ms(delaytime)
 
     def send_command(self, command):
-        logger.debug('EPD.send_command, %s' % command)
         self.digital_write(self.dc_pin, GPIO.LOW)
         # the parameter type is list but not int
         # so use [command] instead of command
         epdif.spi_transfer([command])
 
     def send_data(self, data):
-        logger.debug('EPD.send_data, %s' % data)
         self.digital_write(self.dc_pin, GPIO.HIGH)
         # the parameter type is list but not int
         # so use [data] instead of data
         epdif.spi_transfer([data])
 
     def init(self):
-        logger.debug('EPD.init')
         if (epdif.epd_init() != 0):
             return -1
         self.reset()
-
         self.send_command(POWER_SETTING)
         self.send_data(0x37)
         self.send_data(0x00)
-
         self.send_command(PANEL_SETTING)
         self.send_data(0xCF)
         self.send_data(0x08)
-
         self.send_command(BOOSTER_SOFT_START)
         self.send_data(0xc7)
         self.send_data(0xcc)
         self.send_data(0x28)
-
         self.send_command(POWER_ON)
         self.wait_until_idle()
-
         self.send_command(PLL_CONTROL)
         self.send_data(0x3c)
-
         self.send_command(TEMPERATURE_CALIBRATION)
         self.send_data(0x00)
-
         self.send_command(VCOM_AND_DATA_INTERVAL_SETTING)
         self.send_data(0x77)
-
         self.send_command(TCON_SETTING)
         self.send_data(0x22)
-
         self.send_command(TCON_RESOLUTION)
         self.send_data(0x02)     #source 640
         self.send_data(0x80)
         self.send_data(0x01)     #gate 384
         self.send_data(0x80)
-
         self.send_command(VCM_DC_SETTING)
         self.send_data(0x1E)      #decide by LUT file
-
         self.send_command(0xe5)           #FLASH MODE
         self.send_data(0x03)
 
     def wait_until_idle(self):
-        logger.info('EPD.wait_until_idle')
         while(self.digital_read(self.busy_pin) == 0):      # 0: busy, 1: idle
-            self.delay_ms(1000)
+            self.delay_ms(100)
 
     def reset(self):
-        logger.debug('EPD.reset')
         self.digital_write(self.reset_pin, GPIO.LOW)         # module reset
         self.delay_ms(200)
         self.digital_write(self.reset_pin, GPIO.HIGH)
         self.delay_ms(200)
 
     def get_frame_buffer(self, image):
-        logger.debug('EPD.get_frame_buffer')
-        buf = [0x00] * (self.width * self.height // 8)
+        buf = [0x00] * (self.width * self.height // 4)
         # Set buffer to value of Python Imaging Library image.
-        # Image must be in mode 1.
-        image_monocolor = image.convert('1')
-        imwidth, imheight = image_monocolor.size
+        # Image must be in mode L.
+        image_grayscale = image.convert('L')
+        imwidth, imheight = image_grayscale.size
         if imwidth != self.width or imheight != self.height:
             raise ValueError('Image must be same dimensions as display \
                 ({0}x{1}).' .format(self.width, self.height))
 
-        pixels = image_monocolor.load()
+        pixels = image_grayscale.load()
         for y in range(self.height):
             for x in range(self.width):
                 # Set the bits for the column of pixels at the current position.
-                if pixels[x, y] != 0:
-                    buf[(x + y * self.width) // 8] |= 0x80 >> (x % 8)
+                if pixels[x, y] < 64:           # black
+                    buf[(x + y * self.width) // 4] &= ~(0xC0 >> (x % 4 * 2))
+                elif pixels[x, y] < 192:     # convert gray to red
+                    buf[(x + y * self.width) // 4] &= ~(0xC0 >> (x % 4 * 2))
+                    buf[(x + y * self.width) // 4] |= 0x40 >> (x % 4 * 2)
+                else:                           # white
+                    buf[(x + y * self.width) // 4] |= 0xC0 >> (x % 4 * 2)
         return buf
 
     def display_frame(self, frame_buffer):
-        logger.info('EPD.display_frame')
         self.send_command(DATA_START_TRANSMISSION_1)
-        for i in range(0, 30720):
+        for i in range(0, self.width / 4 * self.height):
             temp1 = frame_buffer[i]
             j = 0
-            while (j < 8):
-                if(temp1 & 0x80):
+            while (j < 4):
+                if ((temp1 & 0xC0) == 0xC0):
                     temp2 = 0x03
-                else:
+                elif ((temp1 & 0xC0) == 0x00):
                     temp2 = 0x00
-                temp2 = (temp2 << 4) & 0xFF
-                temp1 = (temp1 << 1) & 0xFF
-                j += 1
-                if(temp1 & 0x80):
-                    temp2 |= 0x03
                 else:
+                    temp2 = 0x04
+                temp2 = (temp2 << 4) & 0xFF
+                temp1 = (temp1 << 2) & 0xFF
+                j += 1
+                if((temp1 & 0xC0) == 0xC0):
+                    temp2 |= 0x03
+                elif ((temp1 & 0xC0) == 0x00):
                     temp2 |= 0x00
-                temp1 = (temp1 << 1) & 0xFF
-                logger.debug('Going to send data, %s at loop %d' % (temp2, i))
+                else:
+                    temp2 |= 0x04
+                temp1 = (temp1 << 2) & 0xFF
                 self.send_data(temp2)
                 j += 1
         self.send_command(DISPLAY_REFRESH)
-        logger.info('Going to refresh')
         self.delay_ms(100)
         self.wait_until_idle()
 
     def sleep(self):
-        logger.debug('EPD.sleep')
         self.send_command(POWER_OFF)
         self.wait_until_idle()
         self.send_command(DEEP_SLEEP)

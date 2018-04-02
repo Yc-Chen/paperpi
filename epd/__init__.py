@@ -1,6 +1,9 @@
-import epd7in5b
+from .epd7in5b import EPD
 
-epd = epd7in5b.EPD()
+EPD_WIDTH = 640
+EPD_HEIGHT = 384
+
+epd = EPD()
 epd.init()
 
 def show(image):

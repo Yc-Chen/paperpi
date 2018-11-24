@@ -5,6 +5,10 @@
 <div id="toolbar">
   <button class="ql-bold">Bold</button>
   <button class="ql-italic">Italic</button>
+  <button onclick="TogetherJS(this); return false;" style="margin-left: 20px;
+  font-size: 14px;
+  width: 200px;
+  text-decoration: underline;">Try TogetherJS</button>
 </div>
 
 <!-- Create the editor container -->
@@ -14,6 +18,7 @@
 
 <!-- Include the Quill library -->
 <script src="https://cdn.quilljs.com/1.0.0/quill.js"></script>
+<script src="https://togetherjs.com/togetherjs-min.js"></script>
 
 <!-- Initialize Quill editor -->
 <script>
